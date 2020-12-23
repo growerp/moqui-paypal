@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+
+
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-2.1.xsd">
+
+    <service verb="get" noun="Token">
+        <out-parameters>
+            <parameter name="token" type="String"/>
+            <parameter name="resultSuccess" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <entity-find-one entity-name="paypal.PaymentGatewayPaypal" value-field="info">
+                <field-map field-name="paymentGatewayConfigId" value="PaypalDemo"/>
+            </entity-find-one>
+            <script><![CDATA[
+                import org.moqui.util.RestClient
+                import org.moqui.context.ExecutionContext
+                ExecutionContext ec = context.ec
+
+                RestClient restClient = ec.service.rest()
+                    .method("POST")
+                    .uri(info.transactionUrl + "/v1/oauth2/token")
+                    .addBodyParameter("grant_type","client_credentials")
+                    .basicAuth(info.clientId, info.secret)
+                RestClient.RestResponse restResponse = restClient.call()
+                resultMap = (Map) restResponse.jsonObject()
+                if (restResponse.statusCode < 200 || restResponse.statusCode >= 300) {
+                    ec.logger.warn("Unsuccessful get token")
+                    ec.logger.info("====return code: ${restResponse.statusCode}")     
+                    resultSuccess = false
+                }   else {
+                    resultSuccess = true
+                    token = resultMap.access_token
+                }
+            ]]></script>
+            <if condition="resultSuccess">
+                <entity-find-one entity-name="paypal.PaymentGatewayPaypal"
+                    value-field="info" for-update="true">
+                    <field-map field-name="paymentGatewayConfigId" value="PaypalDemo"/>
+                </entity-find-one>
+                <set field="info.accessToken" from="token"/>
+                <entity-update value-field="info"/>
+            </if>
+        </actions>
+    </service>
+
+    <service verb="perform" noun="PaypalApi">
+        <in-parameters>
+            <parameter name="intent" required="true"/>
+            <parameter name="paymentId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentGatewayResponseId"/>
+        </out-parameters>
+        <actions>
+            <entity-find-one entity-name="paypal.PaymentGatewayPaypal" value-field="info">
+                <field-map field-name="paymentGatewayConfigId" value="PaypalDemo"/>
+            </entity-find-one>
+            <script><![CDATA[
+                import org.moqui.util.RestClient
+                import org.moqui.context.ExecutionContext
+                ExecutionContext ec = context.ec
+
+                RestClient restClient = ec.service.rest()
+                    .method("POST")
+                    .uri(info.transactionUrl + "/v1/oauth2/token")
+                    .addBodyParameter("grant_type","client_credentials")
+                    .basicAuth(info.clientId, info.secret)
+                RestClient.RestResponse restResponse = restClient.call()
+                resultMap = (Map) restResponse.jsonObject()
+                if (restResponse.statusCode < 200 || restResponse.statusCode >= 300) {
+                    ec.logger.warn("Unsuccessful paypal request")
+                    ec.logger.info("====return code: ${restResponse.statusCode}")     
+                    resultSuccess = false
+                }   else {
+                    resultSuccess = true
+                }
+            ]]></script>
+            <if condition="resultSuccess">
+            </if>
+            <script>
+                final int ResponseCode = 0
+                final int ReasonCode = 2
+                final int ReasonText = 3
+                final int AuthApprovalCode = 4
+                final int AvsResultCode = 5
+                final int TransactionID = 6
+                final int TxAmount = 9
+                final int CvResultCode = 38
+            </script>
+            <set field="responseList" from="responseString.split(delimeter, -1) as List"/>
+
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
+            <if condition="payment &amp;&amp; !paymentMethodId"><set field="paymentMethodId" from="payment.paymentMethodId"/></if>
+            <set field="responseCode" from="responseList.get(ResponseCode)"/>
+            <set field="reasonCode" from="responseList.get(ReasonCode)"/>
+            <set field="amount" from="responseList.get(TxAmount)"/>
+
+            <service-call name="create#mantle.account.method.PaymentGatewayResponse" out-map="context"
+                    in-map="[paymentGatewayConfigId:paymentGatewayConfigId,
+                        paymentOperationEnumId:paymentOperationEnumId,
+                        paymentId:paymentId, paymentMethodId:paymentMethodId,
+                        amount:amount, amountUomId:payment?.amountUomId,
+                        referenceNum:responseList.get(TransactionID),
+                        approvalCode:responseList.get(AuthApprovalCode),
+                        responseCode:responseCode,
+                        reasonCode:reasonCode,
+                        reasonMessage:responseList.get(ReasonText),
+                        avsResult:responseList.get(AvsResultCode),
+                        cvResult:responseList.get(CvResultCode),
+                        transactionDate:ec.user.nowTimestamp,
+                        resultSuccess:(responseCode == '1' ? 'Y' : 'N'),
+                        resultDeclined:(responseCode == '2' ? 'Y' : 'N'),
+                        resultError:(responseCode == '3' ? 'Y' : 'N'),
+                        resultBadExpire:(reasonCode == '7' || reasonCode == '8' ? 'Y' : 'N'),
+                        resultBadCardNumber:(reasonCode == '6' || reasonCode == '37' ? 'Y' : 'N'),
+                        resultNsf:'N']"/>
+        </actions>
+    </service>
+
+    <service verb="capture" noun="Payment">
+        <implements service="mantle.account.PaymentServices.capture#Payment"/>
+        <actions>
+            <log message="====Paypal Capture "/>
+            <service-call name="Paypal.PaymentServices.perform#PaypalApi" out-map="context"
+                in-map="[
+                    intent: 'CAPTURE',
+                    paymentId: paymentId]"/>
+        </actions>
+    </service>
+
+    <service verb="authorize" noun="Payment">
+        <implements service="mantle.account.PaymentServices.authorize#Payment"/>
+        <actions>
+            <log message="====Paypal Authorize "/>
+            <service-call name="Paypal.PaymentServices.perform#PaypalApi" out-map="context"
+                in-map="[
+                intent: 'CAPTURE',
+                paymentId: paymentId]"/>
+        </actions>
+    </service>
+    <service verb="release" noun="Payment">
+        <implements service="mantle.account.PaymentServices.release#Payment"/>
+        <actions>
+            <log message="===Paypal release"/>
+            <service-call name="Paypal.PaymentServices.perform#PaypalApi" out-map="context"
+                in-map="[
+                intent: 'CAPTURE',
+                paymentId: paymentId]"/>
+        </actions>
+    </service>
+    <service verb="refund" noun="Payment">
+        <implements service="mantle.account.PaymentServices.refund#Payment"/>
+        <actions>
+            <log message="====Paypal refund"/>
+            <service-call name="Paypal.PaymentServices.perform#PaypalApi" out-map="context"
+                in-map="[
+                intent: 'REFUND',
+                paymentId: paymentId]"/>
+        </actions>
+    </service>
+
+    <service verb="get" noun="GatewayInfo">
+        <in-parameters><parameter name="paymentGatewayConfigId" required="true"/></in-parameters>
+        <out-parameters><parameter name="gatewayInfoMap" type="Map"/></out-parameters>
+        <actions>
+            <log message="====paypal get#GatewayInfo"/>
+            <return/>
+
+            <entity-find-one entity-name="Paypal.PaymentGatewayPaypal" value-field="pgan"/>
+            <set field="gatewayInfoMap" from="[x_login:pgan.login, x_tran_key:pgan.tranKey,
+                    x_version:pgan.apiVersion, x_duplicate_window:pgan.duplicateWindow,
+                    x_test_request:pgan.testRequest, x_delim_data:'TRUE', x_delim_char:'|', x_relay_response:'FALSE',
+                    x_email_customer:pgan.emailCustomer, x_email_merchant:pgan.emailMerchant]"/>
+            <!-- NOTE: not setting x_encap_char, should not be needed with pipe delimeter -->
+            <!-- handle these later: x_cpversion:pgan.cpVersion, x_market_type:pgan.cpMarketType, x_device_type:pgan.cpDeviceType,  -->
+        </actions>
+    </service>
+    <service verb="get" noun="PaymentGatewayInfo">
+        <in-parameters><parameter name="paymentId" required="true"/></in-parameters>
+        <out-parameters><parameter name="paymentInfoMap" type="Map"/></out-parameters>
+        <actions>
+            <log message="====paypal get#PaymentGatewayInfo"/>
+            <return/>
+
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
+            <set field="creditCard" from="payment.'mantle.account.method.CreditCard'"/>
+            <if condition="!creditCard"><return error="true" message="Cannot not process payment [${paymentId}], not a Credit Card payment."/></if>
+            <set field="paymentMethod" from="payment.'mantle.account.method.PaymentMethod'"/>
+
+            <set field="postalAddress" from="paymentMethod.'mantle.party.contact.PostalAddress'"/>
+            <if condition="!postalAddress"><return error="true" message="Cannot not process payment [${paymentId}], no Address associated with Credit Card [${paymentId}]."/></if>
+            <set field="telecomNumber" from="paymentMethod.'mantle.party.contact.TelecomNumber'"/>
+            <set field="phone" from="(telecomNumber?.countryCode ? (telecomNumber.countryCode + '-') : '') + (telecomNumber?.areaCode ? (telecomNumber.areaCode + '-') : '') + telecomNumber?.contactNumber"/>
+            <set field="emailContactMech" from="paymentMethod.'Email#mantle.party.contact.ContactMech'"/>
+            <set field="visit" from="payment.'moqui.server.Visit'"/>
+
+            <!-- valid values for AIM are V (Visa), M (Master Card), A (AmEx), D (Discover), J (JCB), C (Diners Club);
+                all type values have "Cct" and the 4th character (index 3) matches this pattern for existing records -->
+            <set field="cardTypeCode" from="creditCard.creditCardTypeEnumId?.charAt(3)"/>
+            <!-- TODO, future: support x_method:'ECHECK' for BankAccount records -->
+            <set field="paymentInfoMap" from="[x_method:'CC',
+                    x_amount:toPlainString(payment.amount), x_currency_code:payment.amountUomId,
+                    x_card_num:creditCard.cardNumber, x_exp_date:creditCard.expireDate,
+                    x_card_code:creditCard.cardSecurityCode, x_card_type:cardTypeCode,
+                    x_first_name:paymentMethod.firstNameOnAccount, x_last_name:paymentMethod.lastNameOnAccount,
+                    x_company:paymentMethod.companyNameOnAccount,
+                    x_address:postalAddress.address1, x_city:postalAddress.city, x_state:postalAddress.stateProvinceGeoId,
+                    x_zip:postalAddress.postalCode, x_country:postalAddress.countryGeoId, x_phone:phone,
+                    x_email:emailContactMech?.infoString, x_cust_id:payment.fromPartyId, x_customer_ip:visit?.clientIpAddress,
+                    x_invoice_num:payment.orderId]"/>
+            <!-- TODO, future: maybe send x_description, x_po_num -->
+        </actions>
+    </service>
+    <service verb="get" noun="AuthGatewayInfo">
+        <in-parameters><parameter name="paymentId" required="true"/></in-parameters>
+        <out-parameters><parameter name="authInfoMap" type="Map"/></out-parameters>
+        <actions>
+            <log message="====Paypal get#AuthGatewayInfo"/>
+            <return/>
+            <service-call name="mantle.account.PaymentServices.get#AuthorizePaymentGatewayResponse" in-map="context" out-map="context"/>
+            <if condition="!paymentGatewayResponse"><return error="true" message="Could not find successful authorization for Payment ${paymentId}"/></if>
+
+            <set field="authInfoMap" from="[x_trans_id:paymentGatewayResponse.referenceNum,
+                    x_auth_code:paymentGatewayResponse.approvalCode]"/>
+        </actions>
+    </service>
+
+</services>

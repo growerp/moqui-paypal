@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<entity-facade-xml type="demo">
+
+    <moqui.basic.Enumeration description="Paypal Account" enumId="PgtPaypal" enumTypeId="PaymentGatewayType"/>
+    <mantle.account.method.PaymentGatewayConfig paymentGatewayConfigId="PaypalDemo"
+        paymentGatewayTypeEnumId="PgtPaypal" description="Paypal Demo"
+        authorizeServiceName="Paypal.PaymentServices.authorize#Payment"
+        captureServiceName="Paypal.PaymentServices.capture#Payment"
+        releaseServiceName="Paypal.PaymentServices.release#Payment"
+        refundServiceName="Paypal.PaymentServices.refund#Payment"/>
+
+    <paypal.PaymentGatewayPaypal
+        paymentGatewayConfigId="PaypalDemo"
+        appName="GrowERP-Ecommerce"
+        accessToken=""
+        transactionUrl="https://api-m.sandbox.paypal.com/"
+        apiVersion="v2"
+        account="sb-zamjm1984696@personal.example.com"
+        clientId="AdldFVaRCEiZOGYWJE0SuBKmP6h1psiq8pPPy47R1lleCLGoDI8Ln1O71KkkM5CPamIxJfuBfFqXNqaw"
+        secret="EBj-leTrL-Q_jml5pI3wBpVNlQJgFSl_DNtfL2PrKM7gj62c8A1gIu9eTd5BFja9aBjesCiXmEmmfh8v"
+    />
+
+</entity-facade-xml>
