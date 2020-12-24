@@ -13,14 +13,23 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <entity-facade-xml type="seed">
-    <!--paymentGateways productStoreId ?? paymentInstrumentEnumId="PiCreditCard" paymentGatewayConfigId="PaypalProd"/>
+    <!--moqui.basic.Enumeration description="Paypal Account" enumId="PgtPaypal" enumTypeId="PaymentGatewayType"/>
+    <mantle.account.method.PaymentGatewayConfig paymentGatewayConfigId="Paypal"
+        paymentGatewayTypeEnumId="PgtPaypal" description="Paypal Demo"
+        authorizeServiceName="Paypal.PaymentServices.authorize#Payment"
+        captureServiceName="Paypal.PaymentServices.capture#Payment"
+        releaseServiceName="Paypal.PaymentServices.release#Payment"
+        refundServiceName="Paypal.PaymentServices.refund#Payment"/>
+
     <paypal.PaymentGatewayPaypal
-        paymentGatewayConfigId="PaypalProd"
-        transactionUrl="https://api-m.paypal.com"
+        paymentGatewayConfigId="Paypal"
+        appName="GrowERP-Ecommerce"
+        accessToken=""
+        transactionUrl="https://api-m.sandbox.paypal.com/"
         apiVersion="v2"
-        account="admin@antwebsystems.com"
-        clientId=""
-        secret=""
+        account="sb-zamjm1984696@personal.example.com"
+        clientId="AdldFVaRCEiZOGYWJE0SuBKmP6h1psiq8pPPy47R1lleCLGoDI8Ln1O71KkkM5CPamIxJfuBfFqXNqaw"
+        secret="xxxxxxx"
     /-->
 
 </entity-facade-xml>

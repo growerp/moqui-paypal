@@ -17,20 +17,26 @@ along with this software (see the LICENSE.md file). If not, see
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-2.1.xsd">
 
     <service verb="get" noun="Token">
+        <in-parameters>
+            <parameter name="paymentGatewayConfigId" required="true"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="token" type="String"/>
             <parameter name="resultSuccess" type="Boolean"/>
         </out-parameters>
         <actions>
-            <entity-find-one entity-name="paypal.PaymentGatewayPaypal" value-field="info">
-                <field-map field-name="paymentGatewayConfigId" value="PaypalDemo"/>
-            </entity-find-one>
+            <entity-find-one entity-name="paypal.PaymentGatewayPaypal" value-field="info"/>
+            <if condition="info.expiryDate &amp;&amp; (info.expiryDate &lt; ec.user.nowTimestamp)">
+                <return error="false"
+                    message="token still valid : ${info.expiryDate?.toString()} no update"/></if>
             <script><![CDATA[
                 import org.moqui.util.RestClient
                 import org.moqui.context.ExecutionContext
                 ExecutionContext ec = context.ec
 
                 RestClient restClient = ec.service.rest()
+                    .addHeader("Accept", "application/json")
+                    .addHeader("Accept-Language", "en_US")
                     .method("POST")
                     .uri(info.transactionUrl + "/v1/oauth2/token")
                     .addBodyParameter("grant_type","client_credentials")
@@ -43,7 +49,6 @@ along with this software (see the LICENSE.md file). If not, see
                     resultSuccess = false
                 }   else {
                     resultSuccess = true
-                    token = resultMap.access_token
                 }
             ]]></script>
             <if condition="resultSuccess">
@@ -51,7 +56,8 @@ along with this software (see the LICENSE.md file). If not, see
                     value-field="info" for-update="true">
                     <field-map field-name="paymentGatewayConfigId" value="PaypalDemo"/>
                 </entity-find-one>
-                <set field="info.accessToken" from="token"/>
+                <set field="info.accessToken" from="resultMap.access_token"/>
+                <set field="info.expiryDate" from="ec.user.nowTimestamp + resultMap.expires_in"/>
                 <entity-update value-field="info"/>
             </if>
         </actions>
@@ -59,6 +65,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="perform" noun="PaypalApi">
         <in-parameters>
+            <parameter name="paymentGatewayConfigId" required="true"/>
+            <parameter name="path" required="true"/>
             <parameter name="intent" required="true"/>
             <parameter name="paymentId" required="true"/>
         </in-parameters>
@@ -66,21 +74,29 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="paymentGatewayResponseId"/>
         </out-parameters>
         <actions>
+            <service-call name="Paypal.PaymentServices.get#Token" in-map="context"/>
             <entity-find-one entity-name="paypal.PaymentGatewayPaypal" value-field="info">
                 <field-map field-name="paymentGatewayConfigId" value="PaypalDemo"/>
             </entity-find-one>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
+            <set field="jsonString" from='["PayPal-Request-Id": paymentId, intent: intent, purchase_units: [[ amount: [currency_code: "USD",value: payment.amount]]]]'/>
             <script><![CDATA[
                 import org.moqui.util.RestClient
                 import org.moqui.context.ExecutionContext
-                ExecutionContext ec = context.ec
+                import groovy.json.JsonSlurper
+                import groovy.json.JsonOutput
 
+                ExecutionContext ec = context.ec
                 RestClient restClient = ec.service.rest()
                     .method("POST")
-                    .uri(info.transactionUrl + "/v1/oauth2/token")
-                    .addBodyParameter("grant_type","client_credentials")
-                    .basicAuth(info.clientId, info.secret)
+                    .uri(info.transactionUrl + path)
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Authorization","Bearer " + info.accessToken)
+                    .jsonObject(jsonString)
                 RestClient.RestResponse restResponse = restClient.call()
+                ec.logger.info("=========restResponse: ${restResponse.text()}")
                 resultMap = (Map) restResponse.jsonObject()
+                ec.logger.info("=========resultMap: $resultMap")
                 if (restResponse.statusCode < 200 || restResponse.statusCode >= 300) {
                     ec.logger.warn("Unsuccessful paypal request")
                     ec.logger.info("====return code: ${restResponse.statusCode}")     
@@ -89,79 +105,74 @@ along with this software (see the LICENSE.md file). If not, see
                     resultSuccess = true
                 }
             ]]></script>
-            <if condition="resultSuccess">
-            </if>
-            <script>
-                final int ResponseCode = 0
-                final int ReasonCode = 2
-                final int ReasonText = 3
-                final int AuthApprovalCode = 4
-                final int AvsResultCode = 5
-                final int TransactionID = 6
-                final int TxAmount = 9
-                final int CvResultCode = 38
-            </script>
-            <set field="responseList" from="responseString.split(delimeter, -1) as List"/>
+            <log message="=======${intent}=======${resultMap}"/>
+            <!--if condition="resultSuccess">
+                <else>
 
-            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
-            <if condition="payment &amp;&amp; !paymentMethodId"><set field="paymentMethodId" from="payment.paymentMethodId"/></if>
-            <set field="responseCode" from="responseList.get(ResponseCode)"/>
-            <set field="reasonCode" from="responseList.get(ReasonCode)"/>
-            <set field="amount" from="responseList.get(TxAmount)"/>
-
+                </else>
+            </if-->
+            <set field="mapOperation" from="[AUTHORIZE: 'PgoAuthorize', CAPTURE: 'PgoCapture', RELEASE: 'PgoRelease', REFUND: 'PgoRefund']"/>
             <service-call name="create#mantle.account.method.PaymentGatewayResponse" out-map="context"
-                    in-map="[paymentGatewayConfigId:paymentGatewayConfigId,
-                        paymentOperationEnumId:paymentOperationEnumId,
-                        paymentId:paymentId, paymentMethodId:paymentMethodId,
-                        amount:amount, amountUomId:payment?.amountUomId,
-                        referenceNum:responseList.get(TransactionID),
-                        approvalCode:responseList.get(AuthApprovalCode),
-                        responseCode:responseCode,
-                        reasonCode:reasonCode,
-                        reasonMessage:responseList.get(ReasonText),
-                        avsResult:responseList.get(AvsResultCode),
-                        cvResult:responseList.get(CvResultCode),
-                        transactionDate:ec.user.nowTimestamp,
-                        resultSuccess:(responseCode == '1' ? 'Y' : 'N'),
-                        resultDeclined:(responseCode == '2' ? 'Y' : 'N'),
-                        resultError:(responseCode == '3' ? 'Y' : 'N'),
-                        resultBadExpire:(reasonCode == '7' || reasonCode == '8' ? 'Y' : 'N'),
-                        resultBadCardNumber:(reasonCode == '6' || reasonCode == '37' ? 'Y' : 'N'),
-                        resultNsf:'N']"/>
-        </actions>
-    </service>
-
-    <service verb="capture" noun="Payment">
-        <implements service="mantle.account.PaymentServices.capture#Payment"/>
-        <actions>
-            <log message="====Paypal Capture "/>
-            <service-call name="Paypal.PaymentServices.perform#PaypalApi" out-map="context"
-                in-map="[
-                    intent: 'CAPTURE',
-                    paymentId: paymentId]"/>
+                    in-map="[
+                        paymentGatewayConfigId: paymentGatewayConfigId,
+                        paymentOperationEnumId: mapOperation[intent],
+                        paymentId: payment.paymentId,
+                        paymentMethodId: payment.paymentMethodId,
+                        amount: payment.amount,
+                        amountUomId: payment.amountUomId,
+                        referenceNum: resultMap.id,
+                        approvalCode:'',
+                        responseCode: restResponse.statusCode,
+                        reasonCode:'',
+                        reasonMessage: '',
+                        avsResult: '',
+                        cvResult:'',
+                        transactionDate: ec.user.nowTimestamp,
+                        resultSuccess: resultSuccess ? 'Y' : 'N',
+                        resultDeclined: resultSuccess ? 'N' : 'Y',
+                        resultError: resultSuccess ? 'N' : 'Y',
+                        resultBadExpire:'',
+                        resultBadCardNumber: '',
+                        resultNsf:''
+                        ]"/>
         </actions>
     </service>
 
     <service verb="authorize" noun="Payment">
         <implements service="mantle.account.PaymentServices.authorize#Payment"/>
         <actions>
-            <log message="====Paypal Authorize "/>
+            <log message="====Paypal Authorize: $paymentGatewayConfigId"/>
             <service-call name="Paypal.PaymentServices.perform#PaypalApi" out-map="context"
-                in-map="[
-                intent: 'CAPTURE',
+                in-map="context + [
+                path: '/v2/checkout/orders',
+                intent: 'AUTHORIZE',
                 paymentId: paymentId]"/>
         </actions>
     </service>
+
+    <service verb="capture" noun="Payment">
+        <implements service="mantle.account.PaymentServices.capture#Payment"/>
+        <actions>
+            <log message="====Paypal Capture $paymentGatewayConfigId "/>
+            <service-call name="Paypal.PaymentServices.perform#PaypalApi" out-map="context"
+                in-map="context + [
+                    path: '/v2/checkout/orders',
+                    intent: 'CAPTURE',
+                    paymentId: paymentId]"/>
+        </actions>
+    </service>
+
     <service verb="release" noun="Payment">
         <implements service="mantle.account.PaymentServices.release#Payment"/>
         <actions>
             <log message="===Paypal release"/>
             <service-call name="Paypal.PaymentServices.perform#PaypalApi" out-map="context"
                 in-map="[
-                intent: 'CAPTURE',
+                intent: 'RELEASE',
                 paymentId: paymentId]"/>
         </actions>
     </service>
+
     <service verb="refund" noun="Payment">
         <implements service="mantle.account.PaymentServices.refund#Payment"/>
         <actions>

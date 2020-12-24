@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="paymentGatewayConfigId" type="id" is-pk="true"/>
         <field name="appName" type="text-short"><description>App display name</description></field>
         <field name="transactionUrl" type="text-medium"><description>Transaction URL</description></field>
-        <field name="accessToken" type="text-short"><description>Token to be used in REST calls</description></field>
+        <field name="accessToken" type="text-medium"><description>Token to be used in REST calls</description></field>
         <field name="expiryDate" type="date-time"><description>When the current token is going to expire</description></field>
         <field name="apiVersion" type="text-short"><description>Target Paypal API version</description></field>
         <field name="account" type="text-medium"><description>The email account</description></field>
