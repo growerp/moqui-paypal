@@ -23,6 +23,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="token" type="String"/>
             <parameter name="resultSuccess" type="Boolean"/>
+            <parameter name="approvalUrl"/>
+            <parameter name="executeUrl"/>
         </out-parameters>
         <actions>
             <entity-find-one entity-name="paypal.PaymentGatewayPaypal" value-field="info"/>
@@ -59,7 +61,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <set field="info.accessToken" from="resultMap.access_token"/>
                 <set field="info.expiryDate" from="ec.user.nowTimestamp + resultMap.expires_in"/>
                 <entity-update value-field="info"/>
-            </if>
+                <set field="checkoutUrl" from="info.approvalUrl"/>
+                <set field="executeUrl" from="info.executeUrl"/>
+        </if>
         </actions>
     </service>
 
@@ -79,7 +83,12 @@ along with this software (see the LICENSE.md file). If not, see
                 <field-map field-name="paymentGatewayConfigId" value="PaypalDemo"/>
             </entity-find-one>
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
-            <set field="jsonString" from='["PayPal-Request-Id": paymentId, intent: intent, purchase_units: [[ amount: [currency_code: "USD",value: payment.amount]]]]'/>
+            <set field="jsonString" from='[
+                "PayPal-Request-Id": paymentId,
+                intent: intent,
+                purchase_units:[
+                    [ amount: [currency_code: "USD",value: payment.amount]]]
+                ]'/>
             <script><![CDATA[
                 import org.moqui.util.RestClient
                 import org.moqui.context.ExecutionContext
@@ -111,7 +120,11 @@ along with this software (see the LICENSE.md file). If not, see
 
                 </else>
             </if-->
-            <set field="mapOperation" from="[AUTHORIZE: 'PgoAuthorize', CAPTURE: 'PgoCapture', RELEASE: 'PgoRelease', REFUND: 'PgoRefund']"/>
+            <set field="mapOperation" from="[
+                AUTHORIZE: 'PgoAuthorize',
+                CAPTURE: 'PgoCapture',
+                RELEASE: 'PgoRelease',
+                REFUND: 'PgoRefund']"/>
             <service-call name="create#mantle.account.method.PaymentGatewayResponse" out-map="context"
                     in-map="[
                         paymentGatewayConfigId: paymentGatewayConfigId,
